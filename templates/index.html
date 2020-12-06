@@ -1,0 +1,26 @@
+<html lang="esp">
+<head>
+    <title>Video Streaming </title>
+</head>
+<body>
+<div>
+    <h1>Detector de tapabocas</h1>
+    <canvas id="canvas" width="800px" height="800px"></canvas>
+</div>
+
+<script>
+    var ctx = document.getElementById("canvas").getContext('2d');
+    var img = new Image();
+    img.src = "{{ url_for('video_feed') }}";
+
+    // need only for animated image
+    function refreshCanvas() {
+        ctx.drawImage(img, 0, 0);
+    }
+
+    window.setInterval("refreshCanvas()", 50);
+
+</script>
+
+</body>
+</html>
