@@ -10,15 +10,21 @@ from flask import Flask, render_template, Response
 
 app = Flask(__name__)
 
+face_net = None
+mask_net = None
 confidence_level = 0.5
 prototxt_path = r"face_detector\deploy.prototxt"
 weights_path = r"face_detector\res10_300x300_ssd_iter_140000.caffemodel"
 model_name = "mask_detector.model"
 source_camera = 0  # It will take the first camera in your computer, if is not working use the number 1.
 image_pivot = "caras.jpg"
+red_color = (0, 0, 255)
+green_color = (0, 255, 0)
+con_tapabocas = "Con tapabocas"
+sin_tapabocas = "Sin tapabocas"
 
 
-def detect_and_predict_mask(frame, faceNet, maskNet):
+def detect_and_predict_mask(frame, face_net, mask_net):
     # grab the dimensions of the frame and then construct a blob
     # from it
     (h, w) = frame.shape[:2]
@@ -26,15 +32,15 @@ def detect_and_predict_mask(frame, faceNet, maskNet):
                                  (104.0, 177.0, 123.0))
 
     # pass the blob through the network and obtain the face detections
-    faceNet.setInput(blob)
-    detections = faceNet.forward()
+    face_net.setInput(blob)
+    detections = face_net.forward()
 
     # initialize our list of faces, their corresponding locations,
     # and the list of predictions from our face mask network
     faces = []
     locs = []
     preds = []
-
+    results = []
     # loop over the detections
     for i in range(0, detections.shape[2]):
         # extract the confidence (i.e., probability) associated with
@@ -73,19 +79,25 @@ def detect_and_predict_mask(frame, faceNet, maskNet):
         # faces at the same time rather than one-by-one predictions
         # in the above `for` loop
         faces = np.array(faces, dtype="float32")
-        preds = maskNet.predict(faces, batch_size=32)
+        preds = mask_net.predict(faces, batch_size=32)
+        for prediction in preds:
+            (mask, withoutMask) = prediction
+            # determine the class label and color we'll use to draw
+            # the bounding box and text
+            label = con_tapabocas if mask > withoutMask else sin_tapabocas
+            results.append(label)
+    # return a 3-tuple of the face locations and their corresponding
+    # predictions and results
+    return locs, preds, results
 
-    # return a 2-tuple of the face locations and their corresponding
-    # predictions
-    return locs, preds
 
-
-def model_validation(frame):
+def model_initialization():
     # load our serialized face detector model from disk
-    faceNet = cv2.dnn.readNet(prototxt_path, weights_path)
+    face_network = cv2.dnn.readNet(prototxt_path, weights_path)
     # load the face mask detector model from disk
-    mask_net = load_model(model_name)
-    (locs, preds) = detect_and_predict_mask(frame, faceNet, mask_net)
+    mask_network = load_model(model_name)
+
+    return face_network, mask_network
 
 
 def online_video_recognition():
@@ -101,33 +113,30 @@ def online_video_recognition():
 
         # detect faces in the frame and determine if they are wearing a
         # face mask or not
-        (locs, preds) = detect_and_predict_mask(frame, faceNet, mask_net)
+
+        (locs, preds, results) = detect_and_predict_mask(frame, face_net, mask_net)
 
         # loop over the detected face locations and their corresponding
         # locations
-        for (box, pred) in zip(locs, preds):
+        for (box, pred, result) in zip(locs, preds, results):
             # unpack the bounding box and predictions
             (startX, startY, endX, endY) = box
             (mask, withoutMask) = pred
             # determine the class label and color we'll use to draw
-            # the bounding box and text
-            label = "Con tapabocas" if mask > withoutMask else "Sin tapabocas"
-            color = (0, 255, 0) if label == "Con tapabocas" else (0, 0, 255)
+            color = green_color if result == con_tapabocas else red_color
 
             # include the probability in the label
-            label = "{}: {:.2f}%".format(label, max(mask, withoutMask) * 100)
+            label = "{}: {:.2f}%".format(result, max(mask, withoutMask) * 100)
 
             # display the label and bounding box rectangle on the output
             # frame
-            cv2.putText(frame, label, (startX, startY - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2)
+            cv2.putText(frame, label, (startX, startY - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2)
             cv2.rectangle(frame, (startX, startY), (endX, endY), color, 2)
 
         # show the output frame
-        cv2.imshow("Frame", frame)
         cv2.imwrite(image_pivot, frame)
 
-        # key = cv2.waitKey(1) & 0xFF
+        key = cv2.waitKey(1) & 0xFF
 
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + open(image_pivot, 'rb').read() + b'\r\n')
@@ -146,8 +155,10 @@ def video_feed():
 
 @app.route('/api/recognition')
 def api_recognition():
+    # detect_and_predict_mask(face_net, )
     return Response(online_video_recognition(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
 if __name__ == '__main__':
+    face_net, mask_net = model_initialization()
     app.run()
