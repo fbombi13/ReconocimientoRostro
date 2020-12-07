@@ -2,11 +2,11 @@
 import cv2
 import imutils
 import numpy as np
+from flask import Flask, render_template, Response, request
 from imutils.video import VideoStream
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.image import img_to_array
-from flask import Flask, render_template, Response
 
 app = Flask(__name__)
 
@@ -24,9 +24,8 @@ con_tapabocas = "Con tapabocas"
 sin_tapabocas = "Sin tapabocas"
 
 
-def detect_and_predict_mask(frame, face_net, mask_net):
-    # grab the dimensions of the frame and then construct a blob
-    # from it
+def detect_and_predict_mask(frame):
+    # grab the dimensions of the frame and then construct a blob from it
     (h, w) = frame.shape[:2]
     blob = cv2.dnn.blobFromImage(frame, 1.0, (224, 224),
                                  (104.0, 177.0, 123.0))
@@ -43,20 +42,17 @@ def detect_and_predict_mask(frame, face_net, mask_net):
     results = []
     # loop over the detections
     for i in range(0, detections.shape[2]):
-        # extract the confidence (i.e., probability) associated with
-        # the detection
+        # extract the confidence (i.e., probability) associated with the detection
         confidence = detections[0, 0, i, 2]
 
         # filter out weak detections by ensuring the confidence is
         # greater than the minimum confidence
         if confidence > confidence_level:
-            # compute the (x, y)-coordinates of the bounding box for
-            # the object
+            # compute the (x, y)-coordinates of the bounding box for the object
             box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
             (startX, startY, endX, endY) = box.astype("int")
 
-            # ensure the bounding boxes fall within the dimensions of
-            # the frame
+            # ensure the bounding boxes fall within the dimensions of the frame
             (startX, startY) = (max(0, startX), max(0, startY))
             (endX, endY) = (min(w - 1, endX), min(h - 1, endY))
 
@@ -68,8 +64,7 @@ def detect_and_predict_mask(frame, face_net, mask_net):
             face = img_to_array(face)
             face = preprocess_input(face)
 
-            # add the face and bounding boxes to their respective
-            # lists
+            # add the face and bounding boxes to their respective lists
             faces.append(face)
             locs.append((startX, startY, endX, endY))
 
@@ -86,8 +81,7 @@ def detect_and_predict_mask(frame, face_net, mask_net):
             # the bounding box and text
             label = con_tapabocas if mask > withoutMask else sin_tapabocas
             results.append(label)
-    # return a 3-tuple of the face locations and their corresponding
-    # predictions and results
+    # return a 3-tuple of the face locations and their corresponding predictions and results
     return locs, preds, results
 
 
@@ -111,13 +105,11 @@ def online_video_recognition():
         frame = vs.read()
         frame = imutils.resize(frame, width=800)
 
-        # detect faces in the frame and determine if they are wearing a
-        # face mask or not
+        # detect faces in the frame and determine if they are wearing a face mask or not
 
-        (locs, preds, results) = detect_and_predict_mask(frame, face_net, mask_net)
+        (locs, preds, results) = detect_and_predict_mask(frame)
 
-        # loop over the detected face locations and their corresponding
-        # locations
+        # loop over the detected face locations and their corresponding locations
         for (box, pred, result) in zip(locs, preds, results):
             # unpack the bounding box and predictions
             (startX, startY, endX, endY) = box
@@ -136,8 +128,6 @@ def online_video_recognition():
         # show the output frame
         cv2.imwrite(image_pivot, frame)
 
-        key = cv2.waitKey(1) & 0xFF
-
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + open(image_pivot, 'rb').read() + b'\r\n')
 
@@ -153,10 +143,13 @@ def video_feed():
     return Response(online_video_recognition(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
-@app.route('/api/recognition')
+@app.route('/api/recognition', methods=['POST'])
 def api_recognition():
-    # detect_and_predict_mask(face_net, )
-    return Response(online_video_recognition(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    data = request.args.get('image')
+    image = cv2.imread(data)
+    (locs, preds, results) = detect_and_predict_mask(image)
+
+    return Response(results, mimetype='text/plain')
 
 
 if __name__ == '__main__':
